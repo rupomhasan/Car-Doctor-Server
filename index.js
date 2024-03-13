@@ -1,13 +1,11 @@
 const { MongoClient, ServerApiVersion, ObjectId } = require("mongodb");
-// const { MongoClient, ServerApiVersion, ObjectId } = require("mongodb");
 require("dotenv").config();
 const express = require("express");
 const app = express();
 const cors = require("cors");
 const jwt = require("jsonwebtoken");
-var cookieParser = require("cookie-parser");
-
-const port = process.env.PORT || 2500;
+const cookieParser = require("cookie-parser");
+const port = process.env.PORT || 25000;
 // middleware
 app.use(
   cors({
@@ -28,25 +26,25 @@ const client = new MongoClient(uri, {
 });
 
 // custom middlewares
-const logger = async (req, res, next) => {
-  console.log("called : ", req.host, req.originalUrl);
-  next();
-};
+const verify = async (req, res, next) => {
+  try {
+    const token = req.cookies?.token;
 
-const verifyToken = async (req, res, next) => {
-  const token = req.cookies?.token;
-  console.log("value of token of middlewares : ", token);
-  if (!token) {
-    return res.status(401).send({ message: "UnAuthorized" });
-  }
-  jwt.verify(token, process.env._SECRET_ACCESS_TOKEN, (err, decoded) => {
-    if (err) {
-      return res.status(401).send({ menubar: "UnAuthorized" });
+    if (!token) {
+      res.status(401).send({ status: "UnAuthorized Access", code: "401" });
+      return;
     }
-    console.log("value in the token : ", decoded);
-    req.user = decoded;
+    jwt.verify(token, process.env.SECRET, (error, decode) => {
+      if (error) {
+        res.status(401).send({ status: "UnAuthorized Access", code: "401" });
+      } else {
+        req.decode = decode;
+      }
+    });
     next();
-  });
+  } catch (e) {
+    console.log(e);
+  }
 };
 async function run() {
   try {
@@ -56,25 +54,29 @@ async function run() {
     const bookingCollection = client
       .db("carDoctor")
       .collection("bookedService");
+    const productsCollection = client.db("carDoctor").collection("products");
+    const usersCollection = client.db("carDoctor").collection("users");
 
-    app.post("/jwt", logger, async (req, res) => {
-      const user = req.body;
-      const token = jwt.sign(
-        {
-          user,
-        },
-        process.env._SECRET_ACCESS_TOKEN,
-        { expiresIn: "10h" }
-      );
-      res
-        .cookie("token", token, {
+    app.post("/jwt", (req, res) => {
+      try {
+        const data = req.body;
+        // jwt.sign(payload, secretKey , expireInfo)
+        const token = jwt.sign(data, process.env.SECRET, {
+          expiresIn: "10h",
+        });
+        const expirationDate = new Date();
+        expirationDate.setDate(expirationDate.getDate() + 7);
+        res.cookie("token ", token, {
           httpOnly: true,
-          secure: true,
-          sameSite: "none",
-          maxAge: 10 * 60 * 60 * 1000,
-        })
-        .send({ success: true });
-      // console.log(token);
+          secure: false,
+          expires: expirationDate,
+        });
+        console.log(token, data.email);
+        res.send({ token });
+      } catch (error) {
+        console.log(error);
+        res.send(error);
+      }
     });
 
     // CRUD operation service related api
@@ -82,37 +84,108 @@ async function run() {
     app.get("/", (req, res) => {
       res.send("app is running...");
     });
+    //user data
+    app.get("/users", async (req, res) => {
+      try {
+        const result = await usersCollection.find().toArray();
+        res.send(result);
+      } catch (error) {
+        console.log(error);
+      }
+    });
+    app.post("/users", async (req, res) => {
+      try {
+        const user = req.body;
+        console.log(user);
+        const result = await usersCollection.insertOne(user);
+        res.send(result);
+      } catch (error) {
+        console.log(error);
+      }
+    });
 
-    app.get("/services", logger, async (req, res) => {
+    // SERVICE AREA
+    app.get("/services", async (req, res) => {
       const cursor = serviceCollection.find();
       const result = await cursor.toArray();
       res.send(result);
     });
-    app.get("/service/:id", async (req, res) => {
+    app.get("/service/:id", verify, async (req, res) => {
       const id = req.params.id;
       const query = { _id: new ObjectId(id) };
       const result = await serviceCollection.findOne(query);
       res.send(result);
     });
 
+    app.post("/services", async (req, res) => {
+      try {
+        const service = req.body;
+        console.log("Add New Products ", service);
+        const result = await serviceCollection.insertOne(service);
+        res.send(result);
+      } catch (error) {
+        console.log(error);
+      }
+    });
+    app.delete("/service/:id", async (req, res) => {
+      const id = req.params.id;
+      const query = { _id: new ObjectId(id) };
+      const result = await serviceCollection.deleteOne(query);
+      console.log(id);
+      res.send(result);
+    });
+
+    //Products data
+
+    app.get("/products", async (req, res) => {
+      const result = await productsCollection.find().toArray();
+      res.send(result);
+    });
+    app.get("/product/:id", verify, async (req, res) => {
+      try {
+        console.log(req.decode);
+        const id = req.params.id;
+        const query = { _id: new ObjectId(id) };
+        const result = await productsCollection.findOne(query);
+        res.send(result);
+      } catch (error) {}
+    });
+    app.post("/products", async (req, res) => {
+      try {
+        const product = req.body;
+        const result = await productsCollection.insertOne(product);
+        res.send(result);
+      } catch (error) {
+        console.log(error);
+      }
+    });
+
+    app.delete("/product/:id", async (req, res) => {
+      try {
+        const id = req.params.id;
+        const query = { _id: new ObjectId(id) };
+        const result = await productsCollection.deleteOne(query);
+        console.log(query);
+        res.send(result);
+      } catch (error) {
+        console.log(error);
+      }
+    });
+    app.delete("/products", async (req, res) => {
+      const result = await productsCollection.deleteMany();
+      res.send(result);
+    });
+
     // Booking data
 
-    app.get("/bookings", logger, verifyToken, async (req, res) => {
+    app.get("/bookings", async (req, res) => {
       let query = {};
       if (req.query.email) {
         query = {
           email: req.query.email,
         };
       }
-      if (req.user.user.email !== req.query.email) {
-        return req.status(403).send({ message: "UnAuthorized" });
-      }
-      console.log("user in the valid token : ", req.user);
-      console.log("user email : ", req.query.email);
-      console.log("cookies : ", req.cookies?.token);
-      // if (req.query.email !== req.use.email) {
-      //   return res.status(403).send({ message: "forbidden" });
-      // }
+
       const result = await bookingCollection.find(query).toArray();
       res.send(result);
     });
